@@ -400,14 +400,47 @@ func (h *Handler) SpeakerCount(w http.ResponseWriter, r *http.Request) {
 
 // --- Settings ---
 
+func (h *Handler) settingsPath() string {
+	return h.cfg.SettingDir + "/settings.json"
+}
+
+func (h *Handler) loadSettings() (model.Settings, error) {
+	data, err := os.ReadFile(h.settingsPath())
+	if err != nil {
+		return model.Settings{}, err
+	}
+	var s model.Settings
+	if err := json.Unmarshal(data, &s); err != nil {
+		return model.Settings{}, err
+	}
+	return s, nil
+}
+
+func (h *Handler) saveSettings(s model.Settings) error {
+	os.MkdirAll(h.cfg.SettingDir, 0755)
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(h.settingsPath(), data, 0644)
+}
+
 func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, model.DefaultSettings())
+	s, err := h.loadSettings()
+	if err != nil {
+		s = model.DefaultSettings()
+	}
+	writeJSON(w, http.StatusOK, s)
 }
 
 func (h *Handler) PutSettings(w http.ResponseWriter, r *http.Request) {
 	var s model.Settings
 	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.saveSettings(s); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save settings")
 		return
 	}
 	writeJSON(w, http.StatusOK, s)
