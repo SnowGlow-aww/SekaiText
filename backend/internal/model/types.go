@@ -139,6 +139,8 @@ type Settings struct {
 	DisableSSL      bool   `json:"disableSSL"`
 	VoiceOutputDir   string `json:"voiceOutputDir,omitempty"`
 	JsonDownloadDir  string `json:"jsonDownloadDir,omitempty"`
+	DebugEnabled     bool   `json:"debugEnabled"`
+	IndexOrder       string `json:"indexOrder"`
 
 	LastStoryType   string `json:"lastStoryType,omitempty"`
 	LastStorySort   string `json:"lastStorySort,omitempty"`
@@ -156,7 +158,8 @@ func DefaultSettings() Settings {
 		SaveVoice:      false,
 		DisableSSL:     false,
 		JsonDownloadDir: "./downloads/json",
-
+		DebugEnabled:    false,
+		IndexOrder:      "asc",
 	}
 }
 
