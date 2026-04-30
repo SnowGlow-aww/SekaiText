@@ -74,7 +74,7 @@ export const api = {
     chapter: number
     source: string
   }) =>
-    request<{ scenarioId: string; sourceTalks: import('../types/translation').SourceTalk[] }>(
+    request<{ scenarioId: string; sourceTalks: import('../types/translation').SourceTalk[]; saveTitle: string; chapterTitle: string }>(
       '/story/load',
       { method: 'POST', body: JSON.stringify(data) },
     ),
@@ -86,6 +86,25 @@ export const api = {
     ),
 
   // Translation
+  translationLoadContent: (content: string) =>
+    request<{
+      talks: import('../types/translation').DstTalk[]
+      meta: import('../types/api').SaveMetadata | null
+    }>('/translation/load-content', {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    }),
+
+  translationSerialize: (data: {
+    talks: import('../types/translation').DstTalk[]
+    saveN: boolean
+    meta?: import('../types/api').SaveMetadata
+  }) =>
+    request<{ content: string }>('/translation/serialize', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   translationCreate: (data: {
     sourceTalks: import('../types/translation').SourceTalk[]
     jp: boolean
@@ -95,15 +114,18 @@ export const api = {
   }),
 
   translationLoad: (filePath: string) =>
-    request<import('../types/translation').DstTalk[]>('/translation/load', {
+    request<{
+      talks: import('../types/translation').DstTalk[]
+      meta: import('../types/api').SaveMetadata | null
+    }>('/translation/load', {
       method: 'POST',
       body: JSON.stringify({ filePath }),
     }),
 
-  translationSave: (filePath: string, talks: import('../types/translation').DstTalk[], saveN: boolean) =>
+  translationSave: (filePath: string, talks: import('../types/translation').DstTalk[], saveN: boolean, meta?: import('../types/api').SaveMetadata) =>
     request<{ status: string }>('/translation/save', {
       method: 'POST',
-      body: JSON.stringify({ filePath, talks, saveN }),
+      body: JSON.stringify({ filePath, talks, saveN, meta }),
     }),
 
   checkLines: (data: {
@@ -155,7 +177,7 @@ export const api = {
     referTalks: import('../types/translation').DstTalk[]
     checkTalks: import('../types/translation').DstTalk[]
     editorMode: number
-  }) => request<import('../types/translation').DstTalk[]>('/editor/compare', {
+  }) => request<{ talks: import('../types/translation').DstTalk[]; dstTalks: import('../types/translation').DstTalk[] }>('/editor/compare', {
     method: 'POST',
     body: JSON.stringify(data),
   }),
@@ -203,6 +225,30 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  // Recovery (autosave)
+  recoverySave: (data: {
+    talks: import('../types/translation').DstTalk[]
+    saveN: boolean
+    filePath: string
+    editorMode: number
+  }) =>
+    request<{ status: string }>('/recovery/save', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  recoveryLoad: () =>
+    request<{
+      exists: boolean
+      content?: string
+      filePath?: string
+      editorMode?: number
+      savedAt?: string
+    }>('/recovery/load'),
+
+  recoveryClear: () =>
+    request<{ status: string }>('/recovery/clear', { method: 'DELETE' }),
 
   // Settings
   getSettings: () => request<import('../types/api').Settings>('/settings'),

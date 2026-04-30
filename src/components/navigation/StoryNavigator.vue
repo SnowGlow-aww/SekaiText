@@ -177,7 +177,9 @@ async function handleLoad() {
       <option v-for="c in story.chapters" :key="c.number" :value="c.number">{{ c.label }}</option>
     </select>
 
-    <span class="px-2 py-1 text-xs text-[var(--color-text-secondary)]">harukineo</span>
+    <select v-model="story.selectedSource" class="px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-sm">
+      <option value="haruki">harukineo</option>
+    </select>
 
     <button
       @click="handleRefresh"

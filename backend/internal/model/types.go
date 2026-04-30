@@ -23,7 +23,8 @@ type DstTalk struct {
 	DstIdx    int    `json:"dstidx"`
 	ReferID   int    `json:"referid,omitempty"`
 	Proofread *bool  `json:"proofread,omitempty"`
-	CheckMode bool   `json:"checkmode,omitempty"`
+	CheckMode bool       `json:"checkmode,omitempty"`
+	DiffParts []DiffPart `json:"diff,omitempty"`
 }
 
 // EditorMode constants
@@ -126,8 +127,10 @@ type StoryChapter struct {
 
 // JsonPathResult contains CDN URL and filename for loading a story.
 type JsonPathResult struct {
-	URL      string `json:"url"`
-	FileName string `json:"fileName"`
+	URL         string `json:"url"`
+	FileName    string `json:"fileName"`
+	SaveTitle   string `json:"saveTitle"`
+	ChapterTitle string `json:"chapterTitle"`
 }
 
 // Settings represents application settings.
@@ -182,8 +185,10 @@ type LoadRequest struct {
 
 // LoadResponse contains source talks after loading.
 type LoadResponse struct {
-	ScenarioID string       `json:"scenarioId"`
-	SourceTalks []SourceTalk `json:"sourceTalks"`
+	ScenarioID   string       `json:"scenarioId"`
+	SourceTalks  []SourceTalk `json:"sourceTalks"`
+	SaveTitle    string       `json:"saveTitle"`
+	ChapterTitle string       `json:"chapterTitle"`
 }
 
 // TranslationCreateRequest creates a new translation from source talks.
@@ -199,9 +204,10 @@ type TranslationLoadRequest struct {
 
 // TranslationSaveRequest saves a translation file.
 type TranslationSaveRequest struct {
-	FilePath string `json:"filePath" validate:"required"`
-	Talks    []DstTalk `json:"talks" validate:"required"`
-	SaveN    bool   `json:"saveN"`
+	FilePath string        `json:"filePath" validate:"required"`
+	Talks    []DstTalk     `json:"talks" validate:"required"`
+	SaveN    bool          `json:"saveN"`
+	Meta     *SaveMetadata `json:"meta,omitempty"`
 }
 
 // EditorChangeTextRequest edits text in a talk entry.
@@ -338,3 +344,36 @@ type DownloadTaskProgress struct {
 	FilePath  string `json:"filePath,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
+
+// RecoveryData is the autosave recovery payload stored on disk.
+type RecoveryData struct {
+	Content    string `json:"content"`
+	FilePath   string `json:"filePath"`
+	EditorMode int    `json:"editorMode"`
+	SavedAt    string `json:"savedAt"`
+}
+
+// RecoverySaveRequest saves editor state for crash recovery.
+type RecoverySaveRequest struct {
+	Talks      []DstTalk `json:"talks"`
+	SaveN      bool      `json:"saveN"`
+	FilePath   string    `json:"filePath"`
+	EditorMode int       `json:"editorMode"`
+}
+
+// SaveMetadata is embedded in save files so the app can auto-navigate on open.
+type SaveMetadata struct {
+	StoryType  string `json:"type"`
+	Sort       string `json:"sort,omitempty"`
+	Index      string `json:"index"`
+	Chapter    int    `json:"chapter"`
+	Source     string `json:"source"`
+	ScenarioID string `json:"scenarioId"`
+}
+
+// DiffPart represents a segment of a text diff for 合意 highlighting.
+type DiffPart struct {
+	Text string `json:"text"`
+	Type string `json:"type"` // "same", "add", "remove"
+}
+

@@ -20,6 +20,12 @@ export interface DstTalk {
   referid?: number
   proofread?: boolean | null
   checkmode?: boolean
+  diff?: DiffPart[]
+}
+
+export interface DiffPart {
+  text: string
+  type: 'same' | 'add' | 'remove'
 }
 
 export type EditorMode = 0 | 1 | 2

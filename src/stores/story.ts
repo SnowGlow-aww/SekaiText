@@ -17,6 +17,8 @@ export const useStoryStore = defineStore('story', () => {
 
   const scenarioId = ref('')
   const sourceTalks = ref<SourceTalk[]>([])
+  const saveTitle = ref('')
+  const chapterTitle = ref('')
   const loading = ref(false)
 
   async function fetchTypes() {
@@ -47,6 +49,8 @@ export const useStoryStore = defineStore('story', () => {
       })
       scenarioId.value = result.scenarioId
       sourceTalks.value = result.sourceTalks
+      saveTitle.value = result.saveTitle || ''
+      chapterTitle.value = result.chapterTitle || ''
     } finally {
       loading.value = false
     }
@@ -58,6 +62,8 @@ export const useStoryStore = defineStore('story', () => {
       const result = await api.storyLoadLocal(content)
       scenarioId.value = result.scenarioId
       sourceTalks.value = result.sourceTalks
+      saveTitle.value = ''
+      chapterTitle.value = ''
       selectedType.value = ''
       selectedSort.value = ''
       selectedIndex.value = ''
@@ -70,7 +76,7 @@ export const useStoryStore = defineStore('story', () => {
   return {
     storyTypes, sorts, indices, chapters,
     selectedType, selectedSort, selectedIndex, selectedChapter, selectedSource,
-    scenarioId, sourceTalks, loading,
+    scenarioId, sourceTalks, saveTitle, chapterTitle, loading,
     fetchTypes, fetchSorts, fetchIndex, fetchChapters, loadStory, loadStoryLocal,
   }
 })

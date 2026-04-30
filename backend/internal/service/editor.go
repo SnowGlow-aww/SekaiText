@@ -1,8 +1,11 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+
+	diff "github.com/sergi/go-diff/diffmatchpatch"
 	"os"
 	"strings"
 
@@ -66,71 +69,12 @@ func (e *EditorService) CreateFile(srctalks []model.SourceTalk, jp bool) []model
 }
 
 // LoadFile parses a translation .txt file into DstTalk entries.
-func (e *EditorService) LoadFile(filepath string) ([]model.DstTalk, error) {
+func (e *EditorService) LoadFile(filepath string) ([]model.DstTalk, *model.SaveMetadata, error) {
 	data, err := os.ReadFile(filepath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+		return nil, nil, fmt.Errorf("failed to read file: %w", err)
 	}
-
-	lines := strings.Split(string(data), "\n")
-	var talks []model.DstTalk
-	preblank := false
-
-	for idx, line := range lines {
-		line = strings.Replace(line, ":", "：", 1)
-		var speaker, fulltext string
-
-		if strings.Contains(line, "：") {
-			parts := strings.SplitN(line, "：", 2)
-			speaker = parts[0]
-			fulltext = parts[1]
-		} else if strings.Contains(line, "/") {
-			speaker = "选项"
-			fulltext = line
-		} else {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				speaker = ""
-				fulltext = line
-			} else {
-				speaker = "场景"
-				fulltext = line
-			}
-		}
-
-		// Skip continuous blank lines
-		if speaker == "" {
-			if preblank {
-				continue
-			}
-			preblank = true
-		} else {
-			preblank = false
-		}
-
-		texts := strings.Split(fulltext, "\\N")
-		for iidx, text := range texts {
-			text, checked, msg := e.checkText(speaker, text)
-			talk := model.DstTalk{
-				Idx:     idx + 1,
-				Speaker: speaker,
-				Text:    text,
-				Start:   iidx == 0,
-				End:     false,
-				Checked: checked,
-				Save:    true,
-				Message: msg,
-			}
-			talks = append(talks, talk)
-		}
-		talks[len(talks)-1].End = true
-	}
-
-	if preblank && len(talks) > 0 {
-		talks = talks[:len(talks)-1]
-	}
-
-	return talks, nil
+	return e.LoadContent(string(data))
 }
 
 // SaveFile serializes dstTalks to translation .txt format.
@@ -169,6 +113,132 @@ func (e *EditorService) SaveFile(filepath string, dsttalks []model.DstTalk, save
 
 	result := strings.TrimRight(out.String(), "\n")
 	return os.WriteFile(filepath, []byte(result), 0644)
+}
+
+// LoadContent parses translation content from a string instead of a file.
+// Returns the parsed talks and any embedded SaveMetadata (nil if absent).
+func (e *EditorService) LoadContent(content string) ([]model.DstTalk, *model.SaveMetadata, error) {
+	var meta *model.SaveMetadata
+	if strings.HasPrefix(content, "#SekaiText ") {
+		idx := strings.Index(content, "\n")
+		if idx > 0 {
+			header := content[len("#SekaiText "):idx]
+			var m model.SaveMetadata
+			if json.Unmarshal([]byte(header), &m) == nil {
+				meta = &m
+			}
+			content = content[idx+1:]
+		}
+	}
+
+	lines := strings.Split(content, "\n")
+	var talks []model.DstTalk
+	preblank := false
+
+	for idx, line := range lines {
+		line = strings.Replace(line, ":", "：", 1)
+		var speaker, fulltext string
+
+		if strings.Contains(line, "：") {
+			parts := strings.SplitN(line, "：", 2)
+			speaker = parts[0]
+			fulltext = parts[1]
+		} else if strings.Contains(line, "/") {
+			speaker = "选项"
+			fulltext = line
+		} else {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				speaker = ""
+				fulltext = line
+			} else {
+				speaker = "场景"
+				fulltext = line
+			}
+		}
+
+		if speaker == "" {
+			if preblank {
+				continue
+			}
+			preblank = true
+		} else {
+			preblank = false
+		}
+
+		texts := strings.Split(fulltext, "\\N")
+		for iidx, text := range texts {
+			text, checked, msg := e.checkText(speaker, text)
+			talk := model.DstTalk{
+				Idx:     idx + 1,
+				Speaker: speaker,
+				Text:    text,
+				Start:   iidx == 0,
+				End:     false,
+				Checked: checked,
+				Save:    true,
+				Message: msg,
+			}
+			talks = append(talks, talk)
+		}
+		talks[len(talks)-1].End = true
+	}
+
+	if preblank && len(talks) > 0 {
+		talks = talks[:len(talks)-1]
+	}
+
+	return talks, meta, nil
+}
+
+// SerializeWithMeta prepends a metadata header to the serialized content.
+func (e *EditorService) SerializeWithMeta(dsttalks []model.DstTalk, saveN bool, meta *model.SaveMetadata) string {
+	content := e.SerializeContent(dsttalks, saveN)
+	if meta == nil {
+		return content
+	}
+	b, err := json.Marshal(meta)
+	if err != nil {
+		return content
+	}
+	return "#SekaiText " + string(b) + "\n" + content
+}
+
+// SerializeContent serializes dstTalks to translation text format and returns the string.
+func (e *EditorService) SerializeContent(dsttalks []model.DstTalk, saveN bool) string {
+	var out strings.Builder
+	for _, talk := range dsttalks {
+		switch talk.Speaker {
+		case "场景", "左上场景", "":
+			if (talk.Speaker == "场景" || talk.Speaker == "左上场景") && talk.Text == "" {
+				talk.Text = talk.Speaker
+			} else if talk.Speaker == "选项" && !strings.Contains(talk.Text, "/") {
+				talk.Text = talk.Text + "/"
+			}
+			if talk.Speaker == "" && talk.Text != "" {
+				out.WriteString(talk.Text)
+			} else {
+				out.WriteString(talk.Text)
+			}
+			out.WriteString("\n")
+
+		default:
+			if talk.Start {
+				out.WriteString(talk.Speaker + "：")
+			}
+			lines := strings.Split(talk.Text, "\n")
+			out.WriteString(lines[0])
+			if !talk.End {
+				if saveN {
+					out.WriteString("\\N")
+				}
+			} else {
+				out.WriteString("\n")
+			}
+		}
+	}
+
+	return strings.TrimRight(out.String(), "\n")
 }
 
 // CheckLines aligns loaded talks with source talks (handles line mismatches).
@@ -322,69 +392,127 @@ func (e *EditorService) CheckLines(srctalks []model.SourceTalk, loadtalks []mode
 	return newtalks
 }
 
-// CompareText compares referTalks with checkTalks for proofread/check modes.
+// CompareText compares referTalks with checkTalks sub-line by sub-line,
+// grouped by source idx. Each sub-line pair within an idx is compared individually.
 func (e *EditorService) CompareText(refertalks, checktalks []model.DstTalk, editormode int) []model.DstTalk {
+	refGrp := groupByIdx(refertalks)
+	chkGrp := groupByIdx(checktalks)
+
+	// Collect all unique idxs in order
+	var keys []int
+	seen := make(map[int]bool)
+	for _, t := range refertalks {
+		if !seen[t.Idx] {
+			seen[t.Idx] = true
+			keys = append(keys, t.Idx)
+		}
+	}
+	for _, t := range checktalks {
+		if !seen[t.Idx] {
+			seen[t.Idx] = true
+			keys = append(keys, t.Idx)
+		}
+	}
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[j] < keys[i] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+
 	var newtalks []model.DstTalk
-	cidx := 0
+	dstBase := 0
 
-	for idx, talk := range refertalks {
-		// Extra lines in checktalks
-		for cidx < len(checktalks) && talk.Idx > checktalks[cidx].Idx {
-			checktalks[cidx].Proofread = boolPtr(true)
-			checktalks[cidx].DstIdx = cidx
-			newtalks = append(newtalks, checktalks[cidx])
-			cidx++
+	for _, idx := range keys {
+		ref := refGrp[idx]
+		chk := chkGrp[idx]
+		maxN := len(ref)
+		if len(chk) > maxN {
+			maxN = len(chk)
 		}
 
-		if cidx >= len(checktalks) {
-			newtalk := talk
-			newtalk.Checked = false
-			newtalk.Save = false
-			newtalk.Proofread = boolPtr(false)
-			if editormode == 2 {
-				newtalk.CheckMode = true
+		if len(ref) == 0 {
+			for k, t := range chk {
+				t.Proofread = boolPtr(true)
+				t.DstIdx = dstBase + k
+				newtalks = append(newtalks, t)
 			}
-			newtalk.ReferID = idx
-			newtalks = append(newtalks, newtalk)
-			continue
-		}
-
-		if talk.Idx == checktalks[cidx].Idx {
-			newtalk := talk
-			if talk.Text == checktalks[cidx].Text {
-				newtalk.DstIdx = cidx
-				newtalk.ReferID = idx
-				newtalks = append(newtalks, newtalk)
-				cidx++
-			} else {
-				newtalk.Checked = false
-				newtalk.Save = false
-				newtalk.Proofread = boolPtr(false)
+		} else if len(chk) == 0 {
+			for k, t := range ref {
+				t.Checked = false
+				t.DstIdx = dstBase + k
 				if editormode == 2 {
-					newtalk.CheckMode = true
+					t.CheckMode = true
+				} else {
+					t.Save = false
+					t.Proofread = boolPtr(false)
 				}
-				newtalk.ReferID = idx
-				newtalks = append(newtalks, newtalk)
+				newtalks = append(newtalks, t)
+			}
+		} else {
+			// Compare sub-line by sub-line
+			for k := 0; k < maxN; k++ {
+				if k < len(ref) && k < len(chk) {
+					r := ref[k]
+					c := chk[k]
+					if r.Text == c.Text {
+						r.DstIdx = dstBase
+						newtalks = append(newtalks, r)
+						dstBase++
+					} else {
+						r.Checked = false
+						r.DstIdx = dstBase
+						if editormode == 2 {
+							r.CheckMode = true
+							referDiff, checkDiff := computeDiff(r.Text, c.Text)
+							r.DiffParts = referDiff
+							c.DiffParts = checkDiff
+						} else {
+							r.Save = false
+							r.Proofread = boolPtr(false)
+						}
+						newtalks = append(newtalks, r)
+						dstBase++
 
-				checktalks[cidx].Proofread = boolPtr(true)
-				checktalks[cidx].DstIdx = cidx
-				newtalks = append(newtalks, checktalks[cidx])
-				cidx++
+						c.Proofread = boolPtr(true)
+						c.DstIdx = dstBase
+						newtalks = append(newtalks, c)
+						dstBase++
+					}
+				} else if k < len(ref) {
+					r := ref[k]
+					r.Checked = false
+					r.DstIdx = dstBase
+					if editormode == 2 {
+						r.CheckMode = true
+					} else {
+						r.Save = false
+						r.Proofread = boolPtr(false)
+					}
+					newtalks = append(newtalks, r)
+					dstBase++
+				} else {
+					c := chk[k]
+					c.Proofread = boolPtr(true)
+					c.DstIdx = dstBase
+					newtalks = append(newtalks, c)
+					dstBase++
+				}
 			}
-		} else if talk.Idx < checktalks[cidx].Idx {
-			newtalk := talk
-			newtalk.Checked = false
-			newtalk.Save = false
-			newtalk.Proofread = boolPtr(false)
-			if editormode == 2 {
-				newtalk.CheckMode = true
-			}
-			newtalk.ReferID = idx
-			newtalks = append(newtalks, newtalk)
 		}
 	}
 
 	return newtalks
+}
+
+// groupByIdx collects rows with the same source idx into slices.
+func groupByIdx(talks []model.DstTalk) map[int][]model.DstTalk {
+	groups := make(map[int][]model.DstTalk)
+	for _, t := range talks {
+		groups[t.Idx] = append(groups[t.Idx], t)
+	}
+	return groups
 }
 
 // ChangeText handles text editing with proofread mode logic.
@@ -421,10 +549,9 @@ func (e *EditorService) ChangeText(row int, text string, editormode int,
 		return talks, dsttalks
 	}
 
-	// Proofread/Check mode
-	if editormode == 1 || editormode == 2 {
+	// Proofread mode — create new proofread line when editing original
+	if editormode == 1 {
 		if talks[row].Proofread == nil || !*talks[row].Proofread {
-			// Create new proofread line
 			newtalk := talks[row]
 			newtalk.Text = text
 			newtalk.Checked = true
@@ -440,7 +567,6 @@ func (e *EditorService) ChangeText(row int, text string, editormode int,
 			}
 			newtalk.DstIdx = dstidx
 
-			// Insert new row
 			talks = insertTalk(talks, row+1, newtalk)
 			talks[row].Checked = false
 			talks[row].Save = false
@@ -462,7 +588,53 @@ func (e *EditorService) ChangeText(row int, text string, editormode int,
 		}
 	}
 
+	// Check/合意 mode — always update in-place, recompute diffs
+	if editormode == 2 {
+		talks[row].Text = text
+		talks[row].Checked = true
+		talks[row].Message = msg
+		dstidx := talks[row].DstIdx
+		if dstidx < len(dsttalks) {
+			dsttalks[dstidx].Text = text
+			dsttalks[dstidx].Checked = checked
+			dsttalks[dstidx].Message = msg
+		}
+		recomputeDiffs(talks, talks[row].Idx)
+	}
+
 	return talks, dsttalks
+}
+
+// recomputeDiffs recalculates diffs for sub-line pairs at a given idx after editing.
+// Sub-lines are paired positionally: checkmode₀ with proofread₀, checkmode₁ with proofread₁, etc.
+func recomputeDiffs(talks []model.DstTalk, rowIdx int) {
+	// Collect rows at this idx
+	var rows []int
+	for i := range talks {
+		if talks[i].Idx == rowIdx {
+			rows = append(rows, i)
+		}
+	}
+	// Pair consecutive checkmode+proofread rows by position
+	for i := 0; i < len(rows)-1; {
+		a := rows[i]
+		b := rows[i+1]
+		ra := talks[a]
+		rb := talks[b]
+		if ra.CheckMode && rb.Proofread != nil && *rb.Proofread {
+			if ra.Text == rb.Text {
+				ra.DiffParts = nil
+				rb.DiffParts = nil
+			} else {
+				referDiff, checkDiff := computeDiff(ra.Text, rb.Text)
+				talks[a].DiffParts = referDiff
+				talks[b].DiffParts = checkDiff
+			}
+			i += 2
+		} else {
+			i++
+		}
+	}
 }
 
 // AddLine adds a sub-line after the given row.
@@ -673,6 +845,27 @@ func lineLength(s string) int {
 		}
 	}
 	return int(math.Ceil(float64(count) / 2.0))
+}
+
+// computeDiff uses diffmatchpatch for character-level diff between two strings.
+func computeDiff(a, b string) ([]model.DiffPart, []model.DiffPart) {
+	dmp := diff.New()
+	diffs := dmp.DiffMain(a, b, false)
+	diffs = dmp.DiffCleanupSemantic(diffs)
+
+	var referParts, checkParts []model.DiffPart
+	for _, d := range diffs {
+		switch d.Type {
+		case diff.DiffEqual:
+			referParts = append(referParts, model.DiffPart{Text: d.Text, Type: "same"})
+			checkParts = append(checkParts, model.DiffPart{Text: d.Text, Type: "same"})
+		case diff.DiffDelete:
+			referParts = append(referParts, model.DiffPart{Text: d.Text, Type: "remove"})
+		case diff.DiffInsert:
+			checkParts = append(checkParts, model.DiffPart{Text: d.Text, Type: "add"})
+		}
+	}
+	return referParts, checkParts
 }
 
 func containsRune(runes []rune, r rune) bool {

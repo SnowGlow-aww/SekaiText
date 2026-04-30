@@ -117,6 +117,8 @@ func (h *Handler) StoryLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp.SaveTitle = path.SaveTitle
+	resp.ChapterTitle = path.ChapterTitle
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -174,12 +176,35 @@ func (h *Handler) TranslationLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	talks, err := h.editor.LoadFile(req.FilePath)
+	talks, meta, err := h.editor.LoadFile(req.FilePath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, talks)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"talks": talks,
+		"meta":  meta,
+	})
+}
+
+func (h *Handler) TranslationLoadContent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	talks, meta, err := h.editor.LoadContent(req.Content)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"talks": talks,
+		"meta":  meta,
+	})
 }
 
 func (h *Handler) TranslationSave(w http.ResponseWriter, r *http.Request) {
@@ -189,11 +214,27 @@ func (h *Handler) TranslationSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.editor.SaveFile(req.FilePath, req.Talks, req.SaveN); err != nil {
+	content := h.editor.SerializeWithMeta(req.Talks, req.SaveN, req.Meta)
+	if err := os.WriteFile(req.FilePath, []byte(content), 0644); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+func (h *Handler) TranslationSerialize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Talks []model.DstTalk    `json:"talks"`
+		SaveN bool               `json:"saveN"`
+		Meta  *model.SaveMetadata `json:"meta,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	content := h.editor.SerializeWithMeta(req.Talks, req.SaveN, req.Meta)
+	writeJSON(w, http.StatusOK, map[string]string{"content": content})
 }
 
 func (h *Handler) CheckLines(w http.ResponseWriter, r *http.Request) {
@@ -260,7 +301,10 @@ func (h *Handler) Compare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	talks := h.editor.CompareText(req.ReferTalks, req.CheckTalks, req.EditorMode)
-	writeJSON(w, http.StatusOK, talks)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"talks":    talks,
+		"dstTalks": talks,
+	})
 }
 
 func (h *Handler) ReplaceBrackets(w http.ResponseWriter, r *http.Request) {
@@ -579,6 +623,65 @@ func (h *Handler) DebugSaveLogs(w http.ResponseWriter, r *http.Request) {
 		"status": "saved",
 		"lines":  len(entries),
 	})
+}
+
+// --- Recovery (autosave) ---
+
+func (h *Handler) recoveryPath() string {
+	return h.cfg.DataDir + "/autosave.json"
+}
+
+func (h *Handler) RecoverySave(w http.ResponseWriter, r *http.Request) {
+	var req model.RecoverySaveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	content := h.editor.SerializeContent(req.Talks, req.SaveN)
+	data := model.RecoveryData{
+		Content:    content,
+		FilePath:   req.FilePath,
+		EditorMode: req.EditorMode,
+		SavedAt:    time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	f, err := os.Create(h.recoveryPath())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save autosave: "+err.Error())
+		return
+	}
+	defer f.Close()
+	json.NewEncoder(f).Encode(data)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+func (h *Handler) RecoveryLoad(w http.ResponseWriter, r *http.Request) {
+	f, err := os.Open(h.recoveryPath())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"exists": false})
+		return
+	}
+	defer f.Close()
+
+	var data model.RecoveryData
+	if err := json.NewDecoder(f).Decode(&data); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"exists": false})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"exists":     true,
+		"content":    data.Content,
+		"filePath":   data.FilePath,
+		"editorMode": data.EditorMode,
+		"savedAt":    data.SavedAt,
+	})
+}
+
+func (h *Handler) RecoveryClear(w http.ResponseWriter, r *http.Request) {
+	os.Remove(h.recoveryPath())
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
 }
 
 // --- Helpers ---

@@ -93,3 +93,12 @@ export interface VoiceURLRequest {
 export interface VoiceURLResponse {
   url: string
 }
+
+export interface SaveMetadata {
+  type: string
+  sort?: string
+  index: string
+  chapter: number
+  source: string
+  scenarioId: string
+}

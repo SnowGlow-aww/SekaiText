@@ -2,9 +2,14 @@
 import { ref, onMounted } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useEditorStore } from '../stores/editor'
+import { useStoryStore } from '../stores/story'
+import { EditorModeLabel } from '../types/translation'
+import type { SaveMetadata } from '../types/api'
 import { useSettingsStore } from '../stores/settings'
-import { api } from '../api/client'
 import { useToast } from '../composables/useToast'
+import { useFileDialog } from '../composables/useFileDialog'
+import { useAutoSave } from '../composables/useAutoSave'
+import { api } from '../api/client'
 import { Minus, Square, X, Minimize, Pencil, Check, CircleDot, ChevronLeft, ChevronRight, Cog, Download, Bug } from 'lucide-vue-next'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import StoryNavigator from '../components/navigation/StoryNavigator.vue'
@@ -15,8 +20,11 @@ import SpeakerCheckDialog from '../components/dialogs/SpeakerCheckDialog.vue'
 
 const app = useAppStore()
 const editor = useEditorStore()
+const story = useStoryStore()
 const settings = useSettingsStore()
 const toast = useToast()
+const fileDialog = useFileDialog()
+const autoSave = useAutoSave()
 
 const isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__
 
@@ -32,6 +40,7 @@ async function minimizeWin(e: MouseEvent) {
 const isMaximized = ref(false)
 
 onMounted(async () => {
+  autoSave.start()
   if (!isTauri) return
   try {
     const win = getCurrentWindow()
@@ -74,6 +83,7 @@ const sidebarOpen = ref(true)
 function setMode(key: number) {
   editor.switchMode(key as 0 | 1 | 2)
   app.setEditorMode(key as 0 | 1 | 2)
+  if (key === 2) app.showDiff = true
 }
 
 const modes = [
@@ -89,14 +99,37 @@ const modeIcons: Record<number, typeof Pencil> = {
 }
 
 async function handleOpen() {
-  const path = window.prompt('输入翻译文件路径：')
-  if (!path) return
   try {
-    const loaded = await api.translationLoad(path)
-    editor.setTalks(loaded, loaded, [])
-    editor.currentFilePath = path
+    const result = await fileDialog.openTranslation()
+    if (!result) return
+    editor.setTalks(result.talks, result.talks, [])
+    editor.currentFilePath = result.filePath || result.fileName || ''
     editor.markSaved()
-    toast.show('已打开: ' + path, 'success')
+
+    // Auto-navigate to matching story if metadata present
+    if (result.meta) {
+      try {
+        const m = result.meta
+        story.selectedType = m.type
+        story.selectedSort = m.sort || ''
+        story.selectedIndex = m.index
+        story.selectedChapter = m.chapter
+        story.selectedSource = m.source
+        await story.loadStory()
+
+        if (story.sourceTalks.length > 0) {
+          const aligned = await api.checkLines({
+            sourceTalks: story.sourceTalks,
+            loadedTalks: result.talks,
+          })
+          editor.setTalks(aligned, result.talks, [])
+        }
+      } catch {
+        // Auto-navigation failed, keep loaded content as-is
+      }
+    }
+
+    toast.show('已打开: ' + editor.currentFilePath, 'success')
   } catch (e: any) {
     toast.show('打开失败: ' + (e.message || '未知错误'), 'error')
   }
@@ -104,15 +137,35 @@ async function handleOpen() {
 
 async function handleSave() {
   if (editor.talks.length === 0) return
-  let path: string | null = editor.currentFilePath
-  if (!path) {
-    path = window.prompt('输入保存路径：')
-    if (!path) return
-  }
   try {
-    await api.translationSave(path, editor.dstTalks, app.saveN)
+    const modeLabel = EditorModeLabel[app.editorMode as 0 | 1 | 2]
+    let defaultName = editor.currentFilePath
+    if (!defaultName) {
+      defaultName = '【' + modeLabel + '】' + (story.saveTitle || 'untitled')
+      if (story.chapterTitle) defaultName += ' ' + story.chapterTitle
+      defaultName += '.txt'
+    }
+
+    const meta: SaveMetadata | undefined = story.selectedType ? {
+      type: story.selectedType,
+      sort: story.selectedSort,
+      index: story.selectedIndex,
+      chapter: story.selectedChapter,
+      source: story.selectedSource,
+      scenarioId: story.scenarioId,
+    } : undefined
+
+    // In check mode, only save proofread/confirmed rows, strip checkmode rows
+    let saveTalks = editor.dstTalks
+    if (app.editorMode === 2) {
+      saveTalks = editor.dstTalks.filter(t => !t.checkmode)
+    }
+
+    const path = await fileDialog.saveTranslation(defaultName, saveTalks, app.saveN, meta)
+    if (!path) return
     editor.currentFilePath = path
     editor.markSaved()
+    api.recoveryClear().catch(() => {})
     toast.show('已保存', 'success')
   } catch (e: any) {
     toast.show('保存失败: ' + (e.message || '未知错误'), 'error')
@@ -125,6 +178,71 @@ function handleClear() {
   }
   editor.clearAll()
   toast.show('已清空', 'info')
+}
+
+async function handleCompare() {
+  if (editor.talks.length === 0) {
+    toast.show('请先打开一份校对稿作为基准', 'warn')
+    return
+  }
+  try {
+    const result = await fileDialog.openTranslation()
+    if (!result) return
+    const merged = await api.compare({
+      referTalks: editor.talks,
+      checkTalks: result.talks,
+      editorMode: 2,
+    })
+    editor.setTalks(merged.talks, merged.dstTalks, [])
+    editor.currentFilePath = ''
+    editor.markUnsaved()
+    toast.show('已合并校对稿，请检查并解决差异', 'info')
+  } catch (e: any) {
+    toast.show('合意对比失败: ' + (e.message || '未知错误'), 'error')
+  }
+}
+
+function handleConfirm() {
+  if (editor.talks.length === 0) return
+  if (!confirm('确认合意完成？所有差异将以当前内容为准合并。')) return
+
+  // For each idx, keep proofread version, remove checkmode version
+  const rowsToRemove: number[] = []
+  const dstToRemove: number[] = []
+  const idxHasProofread = new Set<number>()
+  for (const talk of editor.talks) {
+    if (talk.proofread) idxHasProofread.add(talk.idx)
+  }
+
+  for (let i = editor.talks.length - 1; i >= 0; i--) {
+    const talk = editor.talks[i]
+    if (talk.checkmode && idxHasProofread.has(talk.idx)) {
+      rowsToRemove.push(i)
+      dstToRemove.push(talk.dstidx)
+    }
+  }
+
+  for (const i of rowsToRemove) editor.talks.splice(i, 1)
+  dstToRemove.sort((a, b) => b - a)
+  for (const d of dstToRemove) editor.dstTalks.splice(d, 1)
+
+  // Mark all remaining rows as confirmed
+  for (const talk of editor.talks) {
+    talk.checked = true
+    talk.checkmode = false
+    talk.proofread = null
+    talk.diff = undefined
+    let removed = 0
+    for (const d of dstToRemove) { if (talk.dstidx > d) removed++ }
+    talk.dstidx -= removed
+  }
+
+  for (const talk of editor.dstTalks) {
+    talk.checked = true
+  }
+
+  editor.markUnsaved()
+  toast.show('合意已确认', 'success')
 }
 
 async function handleFullCheck() {
@@ -260,6 +378,12 @@ async function handleFullCheck() {
           <button @click="showSpeakerCheck = true" class="px-2.5 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors">说话人</button>
           <button @click="handleFullCheck" class="px-2.5 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors">检查</button>
           <button @click="showSpeakerCount = true" class="px-2.5 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors">统计</button>
+
+          <template v-if="app.editorMode === 2">
+            <div class="w-px h-4 bg-[var(--color-border)]" />
+            <button @click="handleCompare" class="px-2.5 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors font-medium">对比</button>
+            <button @click="handleConfirm" class="px-2.5 py-1 rounded text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors font-medium">确认</button>
+          </template>
         </div>
       </div>
 

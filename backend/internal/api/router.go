@@ -63,7 +63,9 @@ func NewRouter(cfg *config.AppConfig) http.Handler {
 		r.Route("/translation", func(r chi.Router) {
 			r.Post("/create", h.TranslationCreate)
 			r.Post("/load", h.TranslationLoad)
+			r.Post("/load-content", h.TranslationLoadContent)
 			r.Post("/save", h.TranslationSave)
+			r.Post("/serialize", h.TranslationSerialize)
 			r.Post("/check-lines", h.CheckLines)
 		})
 
@@ -95,6 +97,14 @@ func NewRouter(cfg *config.AppConfig) http.Handler {
 		// Settings
 		r.Get("/settings", h.GetSettings)
 		r.Put("/settings", h.PutSettings)
+
+		// Recovery (autosave)
+		r.Route("/recovery", func(r chi.Router) {
+			r.Post("/save", h.RecoverySave)
+			r.Get("/load", h.RecoveryLoad)
+			r.Delete("/clear", h.RecoveryClear)
+			r.Post("/clear", h.RecoveryClear) // for sendBeacon on beforeunload
+		})
 
 		// Update (CDN refresh)
 		r.Post("/update", h.Update)

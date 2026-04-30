@@ -100,8 +100,18 @@ function getRowClass(talk: DstTalk): Record<string, boolean> {
 function getDestBorder(talk: DstTalk): string {
   if (talk.proofread === true && app.showDiff) return 'border-l-green-400'
   if (talk.proofread === false) return 'border-l-yellow-400'
+  if (talk.checkmode) return 'border-l-yellow-400'
   if (talk.proofread === true && talk.checked && app.editorMode === 2) return 'border-l-blue-400'
   if (!talk.checked && talk.save) return 'border-l-red-400'
+  return ''
+}
+
+function getRowBg(talk: DstTalk): string {
+  if (talk.proofread === true && app.showDiff) return 'bg-green-400/8'
+  if (talk.proofread === false) return 'bg-yellow-400/8'
+  if (talk.checkmode) return 'bg-yellow-400/8'
+  if (talk.proofread === true && talk.checked && app.editorMode === 2) return 'bg-blue-400/8'
+  if (!talk.checked && talk.save) return 'bg-red-400/8'
   return ''
 }
 
@@ -163,6 +173,64 @@ async function handleRemoveLine(row: number) {
   } catch (e: any) {
     toast.show('删除行失败：' + e.message, 'error')
   }
+}
+
+function renderHighlight(talk: DstTalk): string {
+  if (!talk.diff || talk.diff.length === 0 || !app.showDiff) {
+    return escapeHtml(talk.text)
+  }
+  return talk.diff.map(p => {
+    const esc = escapeHtml(p.text)
+    if (p.type === 'remove') return `<span class="bg-red-400/30">${esc}</span>`
+    if (p.type === 'add') return `<span class="bg-green-400/30">${esc}</span>`
+    return esc
+  }).join('')
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function handleCheckConfirm(row: number) {
+  const rowIdx = editor.talks[row]?.idx
+  if (!rowIdx && rowIdx !== 0) return
+
+  const confirmingRefer = !!editor.talks[row].checkmode
+
+  // Mark the confirmed row as consensus
+  editor.talks[row].checked = true
+  editor.talks[row].checkmode = false
+  editor.talks[row].proofread = null
+  editor.talks[row].diff = undefined
+
+  // Only remove the paired opposite-version row (adjacent, same idx)
+  // Sub-line pairs are always stored consecutively: checkmode then proofread
+  let pairRow = -1
+  if (confirmingRefer) {
+    // checkmode confirmed → remove the proofread right after it
+    const next = row + 1
+    if (next < editor.talks.length && editor.talks[next].idx === rowIdx && editor.talks[next].proofread) {
+      pairRow = next
+    }
+  } else {
+    // proofread confirmed → remove the checkmode right before it
+    const prev = row - 1
+    if (prev >= 0 && editor.talks[prev].idx === rowIdx && editor.talks[prev].checkmode) {
+      pairRow = prev
+    }
+  }
+
+  if (pairRow >= 0) {
+    const dstToRemove = editor.talks[pairRow].dstidx
+    editor.talks.splice(pairRow, 1)
+    editor.dstTalks.splice(dstToRemove, 1)
+
+    for (const talk of editor.talks) {
+      if (talk.dstidx > dstToRemove) talk.dstidx--
+    }
+  }
+
+  editor.markUnsaved()
 }
 
 function handleBracketsReplace(row: number, brackets: string) {
@@ -246,8 +314,13 @@ function handleContextMenu(e: MouseEvent, row: number) {
                     <div class="text-xs font-medium text-[var(--color-text-secondary)] mb-0.5">
                       {{ srcTalk(group.items[0].talk)?.speaker }}
                     </div>
-                    <div class="leading-relaxed whitespace-pre-wrap break-words" style="font-size: var(--editor-font-size)">
+                    <div v-if="srcTalk(group.items[0].talk)?.text" class="leading-relaxed whitespace-pre-wrap break-words" style="font-size: var(--editor-font-size)">
                       {{ srcTalk(group.items[0].talk)?.text }}
+                    </div>
+                    <div v-else class="flex items-center gap-3" style="font-size: var(--editor-font-size)">
+                      <span class="flex-1 border-t border-[var(--color-border)] opacity-40" />
+                      <span class="text-[var(--color-text-secondary)] text-xs opacity-50 select-none">空</span>
+                      <span class="flex-1 border-t border-[var(--color-border)] opacity-40" />
                     </div>
                   </div>
 
@@ -266,7 +339,7 @@ function handleContextMenu(e: MouseEvent, row: number) {
                 <div
                   v-for="item in group.items"
                   :key="item.globalIdx"
-                  :class="['p-2 rounded-lg border border-[var(--color-border)] transition-colors hover:bg-[var(--color-primary)]/[0.04]', group.items.length === 1 ? 'flex-1 flex flex-col justify-center' : '', getRowClass(item.talk), getDestBorder(item.talk) ? `border-l-4 ${getDestBorder(item.talk)}` : '']"
+                  :class="['p-2 rounded-lg border border-[var(--color-border)] transition-colors hover:bg-[var(--color-primary)]/[0.04]', group.items.length === 1 ? 'flex-1 flex flex-col justify-center' : '', getRowClass(item.talk), getDestBorder(item.talk) ? `border-l-4 ${getDestBorder(item.talk)}` : '', getRowBg(item.talk)]"
                 >
                   <div class="flex items-start gap-2">
                     <div class="w-8 flex-shrink-0 text-xs text-[var(--color-text-secondary)] pt-1">
@@ -283,12 +356,13 @@ function handleContextMenu(e: MouseEvent, row: number) {
                       @contextmenu="handleContextMenu($event, item.globalIdx)"
                     >
                       <div
-                        :contenteditable="item.talk.save && !['场景', '左上场景', '选项', ''].includes(item.talk.speaker)"
+                        :contenteditable="item.talk.save && ![''].includes(item.talk.speaker)"
                         class="leading-relaxed outline-none rounded px-1 -mx-1"
                         style="font-size: var(--editor-font-size)"
-                        :class="{ 'cursor-text': item.talk.save && !['场景', '左上场景', '选项', ''].includes(item.talk.speaker) }"
+                        :class="{ 'cursor-text': item.talk.save && ![''].includes(item.talk.speaker) }"
                         @blur="onBlur($event, item.globalIdx)"
-                      >{{ item.talk.text }}</div>
+                        v-html="renderHighlight(item.talk)"
+                      ></div>
                       <div v-if="item.talk.message" class="text-xs text-red-400 mt-0.5">
                         {{ item.talk.message }}
                       </div>
@@ -297,13 +371,22 @@ function handleContextMenu(e: MouseEvent, row: number) {
                     <div class="flex items-center gap-1 flex-shrink-0">
                       <span v-if="!item.talk.end && item.talk.save" class="text-xs text-[var(--color-text-secondary)] font-mono">\N</span>
                       <button
-                        v-if="item.talk.end && !['场景', '左上场景', '选项', ''].includes(item.talk.speaker) && item.talk.save"
+                        v-if="app.editorMode === 2 && item.talk.save && item.talk.diff && item.talk.diff.length > 0"
+                        class="w-6 h-6 rounded border text-xs transition-colors"
+                        :class="item.talk.checked
+                          ? 'border-blue-400 text-blue-400 bg-blue-400/10'
+                          : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]'"
+                        :title="item.talk.checked ? '已确认' : '确认此行'"
+                        @click="handleCheckConfirm(item.globalIdx)"
+                      >✓</button>
+                      <button
+                        v-if="item.talk.end && ![''].includes(item.talk.speaker) && item.talk.save && !(app.editorMode === 2 && item.talk.checkmode && !item.talk.proofread)"
                         class="w-6 h-6 rounded border border-[var(--color-border)] text-xs hover:text-[var(--color-primary)]"
                         title="添加行"
                         @click="handleAddLine(item.globalIdx)"
                       >+</button>
                       <button
-                        v-if="!item.talk.start"
+                        v-if="!item.talk.start && !(app.editorMode === 2 && item.talk.checkmode && !item.talk.proofread)"
                         class="w-6 h-6 rounded border border-[var(--color-border)] text-xs hover:bg-red-50 dark:hover:bg-red-900/30"
                         title="删除行"
                         @click="handleRemoveLine(item.globalIdx)"

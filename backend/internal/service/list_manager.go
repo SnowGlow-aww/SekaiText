@@ -529,8 +529,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 			url = baseURL + "startapp/scenario/unitstory/" + unit.AssetName + "/" + chapter + "." + extension
 		}
 		return model.JsonPathResult{
-			URL:      url,
-			FileName: "mainStory_" + chapter + ".json",
+			URL:          url,
+			FileName:     "mainStory_" + chapter + ".json",
+			SaveTitle:    strings.ReplaceAll(chapter, "_", "-"),
+			ChapterTitle: ch[chapterIdx].Title,
 		}
 
 		case StoryLabelEvent:
@@ -546,8 +548,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 				url = baseURL + "ondemand/event_story/" + ev.Name + "/scenario/" + chapter + "." + extension
 			}
 			return model.JsonPathResult{
-				URL:      url,
-				FileName: chapter + ".json",
+				URL:          url,
+				FileName:     chapter + ".json",
+				SaveTitle:    strings.Join(lm.processChapterID(lm.eventReverseIndex(ev), strings.Split(chapter, "_")[1:]), "-"),
+				ChapterTitle: ev.Chapters[chapterIdx].Title,
 			}
 		case StoryLabelCardEvent:
 			ev := lm.findEventByID(idx)
@@ -571,8 +575,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 			url = baseURL + "startapp/character/member/res" + charID + "_no" + cardNo + "/" + charID + cardNo + "_" + char.Name + ch + "." + extension
 			}
 			return model.JsonPathResult{
-			URL:      url,
-			FileName: "event" + padZero3(ev.ID) + "_" + char.Name + "_" + ch + ".json",
+			URL:          url,
+			FileName:     "event" + padZero3(ev.ID) + "_" + char.Name + "_" + ch + ".json",
+			SaveTitle:    "event" + padZero3(ev.ID) + "-" + char.Name + "-" + ch,
+			ChapterTitle: cardChapterTitle(chapterIdx),
 		}
 
 	case StoryLabelCardSpecial:
@@ -594,8 +600,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 		ch := padZero(chapterIdx%3 + 1)
 		url, charName := makeCardURL(cardCharID, cardNo, ch)
 		return model.JsonPathResult{
-			URL:      url,
-			FileName: "festival_" + padZero3(f.ID) + "_" + charName + "_" + ch + ".json",
+			URL:          url,
+			FileName:     "festival_" + padZero3(f.ID) + "_" + charName + "_" + ch + ".json",
+			SaveTitle:    fesSaveTitle(f, charName, ch),
+			ChapterTitle: cardChapterTitle(chapterIdx),
 		}
 
 	case StoryLabelCardInit:
@@ -615,8 +623,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 			url = baseURL + "startapp/character/member/res" + padZero3(charId) + "_no" + rarityStr + "/" + padZero3(charId) + rarityStr + "_" + charName + ch + "." + extension
 		}
 		return model.JsonPathResult{
-			URL:      url,
-			FileName: "release_" + charName + "_" + padZero(rarity) + "_" + ch + ".json",
+			URL:          url,
+			FileName:     "release_" + charName + "_" + padZero(rarity) + "_" + ch + ".json",
+			SaveTitle:    "release-" + charName + "-" + padZero(rarity) + "-" + ch,
+			ChapterTitle: cardChapterTitle(chapterIdx),
 		}
 
 	case StoryLabelCardUpgrade:
@@ -659,8 +669,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 		ch := padZero(chapterIdx%3 + 1)
 		url, charName := makeCardURL(charId, cardNo, ch)
 		return model.JsonPathResult{
-			URL:      url,
-			FileName: "levelup_" + charName + "_" + ch + ".json",
+			URL:          url,
+			FileName:     "levelup_" + charName + "_" + ch + ".json",
+			SaveTitle:    "lvelup2023-" + charName + "-" + ch,
+			ChapterTitle: cardChapterTitle(chapterIdx),
 		}
 
 	case StoryLabelAreaTalkInit, StoryLabelAreaTalkUpgrade, StoryLabelAreaTalkExtra:
@@ -677,8 +689,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 		}
 		fileName := "areatalk_" + cs.TalkID + "_" + cs.ScenarioID + ".json"
 		return model.JsonPathResult{
-			URL:      url,
-			FileName: fileName,
+			URL:          url,
+			FileName:     fileName,
+			SaveTitle:    "areatalk-" + cs.TalkID,
+			ChapterTitle: "",
 		}
 
 	case StoryLabelSpecial:
@@ -694,8 +708,10 @@ func (lm *ListManager) GetJsonPath(storyType, sort, index string, chapterIdx int
 			url = baseURL + "startapp/scenario/special/" + story.DirName + "/" + story.FileName + "." + extension
 		}
 		return model.JsonPathResult{
-			URL:      url,
-			FileName: story.FileName + ".json",
+			URL:          url,
+			FileName:     story.FileName + ".json",
+			SaveTitle:    story.Title,
+			ChapterTitle: "",
 		}
 	}
 
@@ -766,6 +782,58 @@ func padZero(n int) string {
 func padZero3(n int) string {
 	return strconv.Itoa(1000 + n)[1:]
 }
+// eventReverseIndex returns the 1-based position of an event in the list (oldest=1, newest=N).
+func (lm *ListManager) eventReverseIndex(ev *EventEntry) int {
+	for i := range lm.Events {
+		if lm.Events[i].ID == ev.ID {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// processChapterID replaces the internal kdyicr_id in chapter asset name parts
+// with the display event index, matching the Python reference logic.
+func (lm *ListManager) processChapterID(eventIndex int, chapterIDs []string) []string {
+	if len(chapterIDs) != 2 {
+		return chapterIDs
+	}
+	kd, err1 := strconv.Atoi(chapterIDs[0])
+	ep, err2 := strconv.Atoi(chapterIDs[1])
+	if err1 != nil || err2 != nil || kd <= 0 || ep <= 0 {
+		return chapterIDs
+	}
+	ev := lm.Events[eventIndex-1]
+	if kd != ev.KdyicrID {
+		return chapterIDs
+	}
+	return []string{strconv.Itoa(eventIndex), chapterIDs[1]}
+}
+
+func cardChapterTitle(chapterIdx int) string {
+	switch chapterIdx % 3 {
+	case 0:
+		return "前篇"
+	case 1:
+		return "后篇"
+	default:
+		return "特殊篇"
+	}
+}
+
+func fesSaveTitle(f FestivalEntry, charName, ch string) string {
+	if f.Collaboration != "" {
+		return "collabo" + padZero3(f.ID) + "-" + charName + "-" + ch
+	}
+	if f.IsBirthday {
+		year := 2021 + (f.ID+2)/4
+		return "birth" + strconv.Itoa(year) + "-" + charName + "-" + ch
+	}
+	year := 2021 + f.ID/4
+	month := f.ID%4*3 + 1
+	return "fes" + strconv.Itoa(year) + padZero(month) + "-" + charName + "-" + ch
+}
+
 
 func (lm *ListManager) findEventByID(id int) *EventEntry {
 	for i := range lm.Events {

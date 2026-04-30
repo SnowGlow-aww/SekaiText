@@ -38,8 +38,8 @@ async function handleOpen() {
   const path = window.prompt("输入翻译文件路径：");
   if (!path) return;
   try {
-    const loaded = await api.translationLoad(path);
-    editor.setTalks(loaded, loaded, []);
+    const result = await api.translationLoad(path);
+    editor.setTalks(result.talks, result.talks, []);
     editor.currentFilePath = path;
     editor.markSaved();
   } catch (e: any) {

@@ -198,11 +198,5 @@ func (d *Downloader) DownloadAndParseJSON(url, fileName string, target interface
 
 // UpdateAll performs a full metadata update from CDN.
 func (lm *ListManager) UpdateAll(settingDir string, pt *ProgressTracker) {
-	// Simplified: just load existing data
-	// Full CDN update logic would be complex (6+ API calls)
-	// The desktop version re-downloads from CDN; for now we reload local files
-	pt.SetTotal(1)
-	lm.loadAll()
-	pt.Done()
-	log.Println("Metadata reloaded from local files")
+	lm.UpdateAllFromCDN(settingDir, pt)
 }

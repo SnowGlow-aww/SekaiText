@@ -4,13 +4,10 @@ import { ArrowLeft } from 'lucide-vue-next'
 import { useAppStore } from '../stores/app'
 import { useSettingsStore } from '../stores/settings'
 import { useToast } from '../composables/useToast'
-import { useDebugLog } from '../composables/useDebugLog'
-
 const router = useRouter()
 const app = useAppStore()
 const settings = useSettingsStore()
 const toast = useToast()
-const debug = useDebugLog()
 
 function saveAndBack() {
   settings.saveSettings().then(() => {
@@ -165,7 +162,7 @@ function saveAndBack() {
                 <div class="text-sm font-medium">调试日志</div>
                 <div class="text-xs text-[var(--color-text-secondary)] mt-0.5">在底部显示调试日志窗口</div>
               </div>
-              <input v-model="debug.enabled" type="checkbox" class="accent-[var(--color-primary)] w-4 h-4" />
+              <input v-model="settings.settings.debugEnabled" type="checkbox" class="accent-[var(--color-primary)] w-4 h-4" />
             </label>
           </div>
         </div>

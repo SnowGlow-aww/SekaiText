@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/cleanup.mjs 5173 && vite",
-    "dev:go": "node scripts/cleanup.mjs 9800 && cd backend && go run ./cmd/server/ --dir .",
+    "dev:go": "node scripts/cleanup.mjs 9800 && cd backend && go run ./cmd/sekaitext/ --dir .",
     "dev:web": "concurrently --names go,vue --prefix-colors yellow,cyan \"npm run dev:go\" \"npm run dev\"",
     "dev:tauri": "npx tauri dev",
     "build:tauri": "npx tauri build",
@@ -17,6 +17,7 @@
     "@tanstack/vue-table": "^8.21.3",
     "@tanstack/vue-virtual": "^3.13.24",
     "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-dialog": "^2.7.0",
     "@vueuse/core": "^14.2.1",
     "lucide-vue-next": "^1.0.0",
     "pinia": "^3.0.4",
