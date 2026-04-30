@@ -26,6 +26,8 @@ dist-ssr
 .claude/
 .vscode/
 
-/backend/downloads/
+backend/downloads/
 
-/backend/resources/
+backend/resources/
+
+scripts/
