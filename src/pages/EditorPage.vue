@@ -48,6 +48,15 @@ onMounted(async () => {
     await win.onResized(async () => {
       isMaximized.value = await win.isMaximized()
     })
+    await win.onCloseRequested(async (event) => {
+      if (forceClose.value) return
+      if (editor.hasUnsavedChanges) {
+        event.preventDefault()
+        // Defer Vue state change outside the IPC callback so reactivity triggers re-render
+        await new Promise(r => setTimeout(r, 0))
+        showCloseConfirm.value = true
+      }
+    })
   } catch (e: any) {
     tauriErr.value = `init: ${e.message || e}`
   }
@@ -74,9 +83,43 @@ async function closeWin(e: MouseEvent) {
   }
 }
 
+async function handleCloseSave() {
+  try {
+    await handleSave()
+    if (!editor.hasUnsavedChanges) {
+      showCloseConfirm.value = false
+      forceClose.value = true
+      await closeWindow()
+    }
+  } catch {
+    // Save failed, stay open
+  }
+  showCloseConfirm.value = false
+}
+
+async function handleCloseDiscard() {
+  showCloseConfirm.value = false
+  forceClose.value = true
+  await closeWindow()
+}
+
+async function closeWindow() {
+  try {
+    await getCurrentWindow().destroy()
+  } catch {
+    try { await getCurrentWindow().close() } catch {}
+  }
+}
+
+function handleCloseCancel() {
+  showCloseConfirm.value = false
+}
+
 const showSpeakerCount = ref(false)
 const tauriErr = ref('')
 const showSpeakerCheck = ref(false)
+const showCloseConfirm = ref(false)
+const forceClose = ref(false)
 
 const sidebarOpen = ref(true)
 
@@ -395,6 +438,36 @@ async function handleFullCheck() {
 
     <SpeakerCountDialog v-if="showSpeakerCount" @close="showSpeakerCount = false" />
     <SpeakerCheckDialog v-if="showSpeakerCheck" @close="showSpeakerCheck = false" />
+
+    <!-- Close Confirmation Dialog -->
+    <div v-if="showCloseConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl w-96 max-w-[90vw] p-6">
+        <h3 class="font-semibold text-sm text-[var(--color-text)] mb-2">有未保存的更改</h3>
+        <p class="text-xs text-[var(--color-text-secondary)] mb-5">
+          关闭前是否保存当前的工作内容？如果不保存，更改将丢失。
+        </p>
+        <div class="flex justify-end gap-2">
+          <button
+            @click="handleCloseCancel"
+            class="px-4 py-2 text-sm rounded-lg border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] transition-colors"
+          >
+            取消
+          </button>
+          <button
+            @click="handleCloseDiscard"
+            class="px-4 py-2 text-sm rounded-lg border border-red-400 text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+          >
+            不保存
+          </button>
+          <button
+            @click="handleCloseSave"
+            class="px-4 py-2 text-sm rounded-lg bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity"
+          >
+            保存并退出
+          </button>
+        </div>
+      </div>
+    </div>
 
   </div>
 </template>

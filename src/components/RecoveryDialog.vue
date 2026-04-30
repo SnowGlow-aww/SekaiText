@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useEditorStore } from '../stores/editor'
 import { useAppStore } from '../stores/app'
 import { useStoryStore } from '../stores/story'
+import { useToast } from '../composables/useToast'
 import { AlertTriangle } from 'lucide-vue-next'
 
 const emit = defineEmits<{
@@ -14,6 +15,7 @@ const emit = defineEmits<{
 const editor = useEditorStore()
 const app = useAppStore()
 const story = useStoryStore()
+const toast = useToast()
 const loading = ref(false)
 
 async function handleRestore() {
@@ -23,6 +25,7 @@ async function handleRestore() {
     if (result.exists && result.content) {
       const { talks } = await api.translationLoadContent(result.content)
       editor.setTalks(talks, talks, [])
+      editor.markUnsaved()
       if (result.filePath) editor.currentFilePath = result.filePath
       if (result.editorMode != null) app.setEditorMode(result.editorMode as 0 | 1 | 2)
 
@@ -42,8 +45,10 @@ async function handleRestore() {
             })
             editor.setTalks(aligned, talks, [])
           }
-        } catch {
+        } catch (e: any) {
           // Story re-load failed; keep recovered talks as-is
+          console.error('Recovery story re-load failed:', e)
+          toast.show('原文恢复失败，请手动重新选择剧情', 'warn')
         }
       }
     }
